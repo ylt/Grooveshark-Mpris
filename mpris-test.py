@@ -1,6 +1,5 @@
 from PyQt4 import QtDBus
-from PyQt4.QtCore import (QCoreApplication, QObject, Q_CLASSINFO, pyqtSlot,
-						  pyqtProperty)
+from PyQt4.QtCore import (QCoreApplication, QObject, Q_CLASSINFO, pyqtSlot, pyqtProperty, QTimer)
 from PyQt4.QtDBus import QDBusConnection, QDBusAbstractAdaptor
 import http.client as httplib
 
@@ -12,14 +11,15 @@ class keySharky():
 	def _query(self, path):
 		conn = httplib.HTTPConnection(self.address)
 		conn.request("GET", path)
-		return conn.getresponse()
+		response = conn.getresponse()
+		return response.read().decode('utf-8')
 
 	def _parse(self, text):
-		lines = text.splitLines(true)
+		lines = text.splitlines(True)
 		out = {}
 		for line in lines:
 			d = line.partition(": ")
-			out[d[0]] = d[1]
+			out[d[0]] = d[2].strip()
 		return out
 
 	def play(self):
@@ -48,13 +48,16 @@ class keySharky():
 		self._query("/volup")
 	def currentSong(self):
 		s = self._query("/currentSong")
-		return self_parse(s)
+		return self._parse(s)
 	def previousSong(self):
-		self._query("/previousSong")
+		s = self._query("/previousSong")
+		return self._parse(s)
 	def nextSong(self):
-		self._query("/nextSong")
+		s = self._query("/nextSong")
+		return self._parse(s)
 	def volume(self):
-		self._query("/volume")
+		v = self._query("/volume")
+		return self._parse(v) 
 	def setVolume(self, volume):
 		self._query("/setVolume?%d" % volume)
 	def muted(self):
@@ -71,7 +74,44 @@ class MyServer(QObject):
 		self.dbus_main = Mpris2_Main(self)
 		self.dbus_player = Mpris2_Player(self, self.keySharky)
 
+		self.currentId = 1
+		self.tracks = {}
 
+		self.timer = QTimer()
+		self.timer.timeout.connect(self.tick)
+		self.timer.start(1000)
+		self.tick()
+
+	def tick(self):
+		current = self.keySharky.currentSong()
+		if self.currentId in self.tracks and self.tracks[self.currentId]["songID"] == current["songID"]:
+			self.tracks[self.currentId] = current #update duration, etc
+			return
+		
+		print(current)
+		self.currentId += 1
+		self.tracks[self.currentId] = current
+	
+	def getTrack(self, Id=None):
+		if Id == None:
+			Id = self.currentId
+		return self.tracks[Id]
+
+	def getMetaData(self, Id=None):
+		if Id == None:
+			Id = self.currentId
+		entry = self.tracks[Id]
+		meta = {
+			"mpris:trackid": Id,
+			"mpris:length": float(entry["calculatedDuration"])*1000,
+			"mpris:artUrl": entry["artURL"],
+			"xesam:album": entry["albumName"],
+			"xesam:artist": entry["artistName"],
+			"xesam:title": entry["songName"],
+			"xesam:trackNumber": entry["trackNum"],
+			"xesam:userRating": 1 if entry["vote"]==1 or entry["isInLibrary"] == "true" else 0
+		}
+		return meta
 class Mpris2_Main(QDBusAbstractAdaptor):
 	Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2")
 	Q_CLASSINFO("D-Bus Introspection",
@@ -156,15 +196,79 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 		super().__init__(parent)
 		self.keySharky = keySharky
 	
+	def __propChanged(name):
+		self.signal.setArguments(
+			[interface, {property: values}, QStringList()]
+		)
+		QtDBus.QDBusConnection.sessionBus().send(self.signal)
+
 	@pyqtProperty(str)
 	def PlaybackStatus(self):
 		song = self.keySharky.currentSong()
-		return song.status
+		return song["status"]
 
-	@pyqtProperty(str)
+	@pyqtProperty(int)
 	def Rate(self):
 		return 1
+	
+	#Todo: metadata
+	@pyqtProperty("QMap<QString, QVariant>")
+	def Metadata(self):
+		return self.parent().getMetaData()
 
+	@pyqtProperty(float)
+	def Volume(self):
+		volume = self.keySharky.volume()
+		return float(volume["volume"])/100
+	@Volume.setter
+	def Volume(self, value):
+		self.keySharky.setVolume(value)*100
+
+	#todo: Position
+	@pyqtProperty(int)
+	def Position(self):
+		return float(self.parent().getTrack()["position"])*100
+
+	#Todo: MinimumRate
+	@pyqtProperty(int)
+	def MinimumRate(self):
+		return 1
+	#Todo: MaximumRate
+	@pyqtProperty(int)
+	def MaxmimumRate(self):
+		return 1
+
+	@pyqtProperty(bool)
+	def CanGoNext(self):
+		song = self.keySharky.nextSong()
+		if "songID" in song:
+			return True
+		return False
+
+	@pyqtProperty(bool)
+	def CanGoPrevious(self):
+		song = self.keySharky.previousSong()
+		if "songID" in song:
+			return True
+		return False
+
+	#Todo: Can Play
+	@pyqtProperty(bool)
+	def CanPlay(self):
+		song = self.keySharky.currentSong()
+		if "songID" in song:
+			return True
+		return False
+	@pyqtProperty(bool)
+	def CanPause(self):
+		song = self.keySharky.currentSong()
+		if "songID" in song:
+			return True
+		return False
+
+	@pyqtProperty(bool)
+	def CanControl(self):
+		return True
 
 	@pyqtSlot()
 	def Next(self):
@@ -197,6 +301,36 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 		pass
 	@pyqtSlot()
 	def OpenURI(self, uri):
+		pass
+
+class Mpris2_TrackList(QDBusAbstractAdaptor):
+	Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2.TrackList")
+	Q_CLASSINFO("D-Bus Introspection",
+		'  <interface name="org.mpris.MediaPlayer2.TrackList">\n'
+		'    <property name="Tracks" type="ao" access="read"/>\n'
+		'    <property name="CanEditTracks" type="b" access="read"/>\n'
+		'    <method name="GetTracksMetadata">\n'
+		'      <arg direction="in" type="ao" name="TrackIDs"/>\n'
+		'      <arg direction="out" type="aa{sv}" name="Metadata"/>\n'
+		'    </method>\n'
+		'    <method name="AddTrack">\n'
+		'      <arg direction="in" type="s" name="Uri"/>\n'
+		'      <arg direction="in" type="o" name="Aftertrack"/>\n'
+		'      <arg direction="in" type="b" name="SetAsCurrent"/>\n'
+		'    </method>\n'
+		'    <method name="RemoveTrack">\n'
+		'      <arg direction="in" type="o" name="TrackId"/>\n'
+		'    </method>\n'
+		'    <method name="GoTo">\n'
+		'      <arg direction="in" type="o" name="TrackId"/>\n'
+		'    </method>\n'
+		'  </interface>\n')
+	def __init__(self, parent, keySharky):
+		super().__init__(parent)
+		self.keySharky = keySharky
+
+	@pyqtSlot()
+	def GetTracksMetadata(self, parent):
 		pass
 
 def start():

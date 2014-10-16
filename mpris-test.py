@@ -70,7 +70,7 @@ class keySharky():
 class MyServer(QObject):
 	def __init__(self):
 		QObject.__init__(self)
-		self.keySharky = keySharky("localhost:8800")
+		self.keySharky = keySharky("127.0.0.1:8800")
 		self.dbus_main = Mpris2_Main(self)
 		self.dbus_player = Mpris2_Player(self, self.keySharky)
 
@@ -127,7 +127,7 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 		'    <property name="Shuffle" type="b" access="readwrite"/>\n'
 		'    <property name="Metadata" type="a{sv}" access="read"/>\n'
 		'    <property name="Volume" type="d" access="readwrite"/>\n'
-		'    <property name="Position" type="x" access="read"/>\n'
+		'    <property name="Position" type="i" access="read"/>\n'
 		'    <property name="MinimumRate" type="d" access="read"/>\n'
 		'    <property name="MaximumRate" type="d" access="read"/>\n'
 		'    <property name="CanGoNext" type="b" access="read"/>\n'
@@ -179,10 +179,12 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 
 		self.currentId = 1
 		self.track = {}
+		#self.prevTrack = {}
+		#self.nextTrack = {}
 
 		self.timer = QTimer()
 		self.timer.timeout.connect(self.tick)
-		self.timer.start(1000)
+		self.timer.start(150)
 		self.tick()
 
 	def tick(self):
@@ -210,7 +212,7 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 		entry = self.track
 		meta = {
 			"mpris:trackid": self.currentId,
-			"mpris:length": float(entry["calculatedDuration"])*1000,
+			"mpris:length": int(float(entry["calculatedDuration"])*1000),
 			"mpris:artUrl": entry["artURL"],
 			"xesam:album": entry["albumName"],
 			"xesam:artist": entry["artistName"],
@@ -222,8 +224,10 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 	
 	@pyqtProperty(str)
 	def PlaybackStatus(self):
-		song = self.keySharky.currentSong()
-		return song["status"]
+		#song = self.keySharky.currentSong()
+		#return song["status"]
+		status = self.getTrack()["status"]
+		return status.title()
 
 	@pyqtProperty(int)
 	def Rate(self):
@@ -242,18 +246,16 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 	def Volume(self, value):
 		self.keySharky.setVolume(value)*100
 
-	#todo: Position
 	@pyqtProperty(int)
 	def Position(self):
-		return float(self.getTrack()["position"])*100
+		return float(self.getTrack()["position"])*1000
 
-	#Todo: MinimumRate
 	@pyqtProperty(int)
 	def MinimumRate(self):
 		return 1
-	#Todo: MaximumRate
+
 	@pyqtProperty(int)
-	def MaxmimumRate(self):
+	def MaximumRate(self):
 		return 1
 
 	@pyqtProperty(bool)
@@ -273,16 +275,20 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 	#Todo: Can Play
 	@pyqtProperty(bool)
 	def CanPlay(self):
-		song = self.keySharky.currentSong()
+		song = self.getTrack()
 		if "songID" in song:
 			return True
 		return False
 	@pyqtProperty(bool)
 	def CanPause(self):
-		song = self.keySharky.currentSong()
+		song = self.getTrack()
 		if "songID" in song:
 			return True
 		return False
+
+	@pyqtProperty(bool)
+	def CanSeek(self):
+		return True
 
 	@pyqtProperty(bool)
 	def CanControl(self):

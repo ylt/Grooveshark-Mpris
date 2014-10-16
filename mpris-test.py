@@ -127,7 +127,7 @@ class Mpris2_Player(QDBusAbstractAdaptor):
 		'    <property name="Shuffle" type="b" access="readwrite"/>\n'
 		'    <property name="Metadata" type="a{sv}" access="read"/>\n'
 		'    <property name="Volume" type="d" access="readwrite"/>\n'
-		'    <property name="Position" type="i" access="read"/>\n'
+		'    <property name="Position" type="x" access="read"/>\n'
 		'    <property name="MinimumRate" type="d" access="read"/>\n'
 		'    <property name="MaximumRate" type="d" access="read"/>\n'
 		'    <property name="CanGoNext" type="b" access="read"/>\n'
